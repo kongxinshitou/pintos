@@ -24,6 +24,9 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /**< Default priority. */
 #define PRI_MAX 63                      /**< Highest priority. */
 
+/** The number of locks relation */
+#define MAX_LOCKS 5
+
 /** A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -93,6 +96,12 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /**< List element. */
 
+   //----------------------------START of the implementation of zhuhongzhi-------------
+    struct lock *owner_locks[MAX_LOCKS];
+    struct lock *waiting_lock;
+    int raw_priority;
+   //----------------------------END of the implementation of zhuhongzhi-------------
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /**< Page directory. */
@@ -138,4 +147,12 @@ void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
+//----------------------------START the implementation of zhuhongzhi-------------
+
+void thread_sleep_until(int64_t ticks);
+
+bool time_block_elem_cmp(struct list_elem *a, struct list_elem *b, void *aux);
+bool thread_priority_elem_cmp(struct list_elem *a, struct list_elem *b, void *aux);
+void update_priority_by_lock(int priority, struct lock *l);
+//----------------------------End the implementation of zhuhongzhi----------------
 #endif /**< threads/thread.h */

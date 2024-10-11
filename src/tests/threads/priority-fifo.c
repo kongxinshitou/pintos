@@ -49,7 +49,6 @@ test_priority_fifo (void)
   output = op = malloc (sizeof *output * THREAD_CNT * ITER_CNT * 2);
   ASSERT (output != NULL);
   lock_init (&lock);
-
   thread_set_priority (PRI_DEFAULT + 2);
   for (i = 0; i < THREAD_CNT; i++) 
     {
@@ -62,8 +61,9 @@ test_priority_fifo (void)
       d->op = &op;
       thread_create (name, PRI_DEFAULT + 1, simple_thread_func, d);
     }
-
+  // printf("Before set priority\n");
   thread_set_priority (PRI_DEFAULT);
+  // printf("After set priority\n");
   /* All the other threads now run to termination here. */
   ASSERT (lock.holder == NULL);
 
@@ -93,7 +93,10 @@ simple_thread_func (void *data_)
     {
       lock_acquire (data->lock);
       *(*data->op)++ = data->id;
+      // thread_current()->priority;
+      printf("thread %d has priority %d is running at %d TH Iter\n", data->id, thread_get_priority(), i);
       lock_release (data->lock);
       thread_yield ();
     }
+    // printf("thread %d finished\n", data->id);
 }

@@ -89,11 +89,28 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks) 
 {
-  int64_t start = timer_ticks ();
+  // int64_t start = timer_ticks ();
+
+  // ASSERT (intr_get_level () == INTR_ON);
+
+ 
+
+  // while (timer_elapsed (start) < ticks){
+  //   thread_yield ();
+  // }
+  // -------------------------------START of the implementation of zhuhongzhi----------
 
   ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+  if (ticks <= 0)
+  {
+    return;
+  }
+  int64_t time_ticks_to_wake = timer_ticks() + ticks;
+  thread_sleep_until(time_ticks_to_wake);
+  
+
+ 
+// --------------------------------END of the implementation of zhuhongzhi-----------
 }
 
 /** Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -244,3 +261,5 @@ real_time_delay (int64_t num, int32_t denom)
   ASSERT (denom % 1000 == 0);
   busy_wait (loops_per_tick * num / 1000 * TIMER_FREQ / (denom / 1000)); 
 }
+
+

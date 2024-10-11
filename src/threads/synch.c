@@ -69,6 +69,7 @@ sema_down (struct semaphore *sema)
   while (sema->value == 0) 
     {
       list_push_back (&sema->waiters, &thread_current ()->elem);
+      // list_insert_ordered(&sema->waiters, &thread_current ()->elem, thread_priority_elem_cmp, NULL);
       thread_block ();
     }
   sema->value--;
@@ -109,15 +110,31 @@ void
 sema_up (struct semaphore *sema) 
 {
   enum intr_level old_level;
-
+  struct thread *t;
   ASSERT (sema != NULL);
 
   old_level = intr_disable ();
+  // if (!list_empty (&sema->waiters)) 
+  //   thread_unblock (list_entry (list_pop_front (&sema->waiters),
+  //                               struct thread, elem));
   if (!list_empty (&sema->waiters)) 
-    thread_unblock (list_entry (list_pop_front (&sema->waiters),
-                                struct thread, elem));
+  {
+    // t = list_entry (list_pop_front (&sema->waiters), struct thread, elem);
+    struct list_elem *max_priority_item = list_max(&sema->waiters, thread_priority_elem_cmp, NULL);
+    list_remove(max_priority_item);
+    t = list_entry (max_priority_item, struct thread, elem);
+    thread_unblock(t);
+  }
   sema->value++;
   intr_set_level (old_level);
+  if (t != NULL && t->priority > thread_current()->priority)
+  {
+        if ( intr_context()) {
+          intr_yield_on_return();
+        } else {
+          thread_yield();
+        }
+  }
 }
 
 static void sema_test_helper (void *sema_);
@@ -195,9 +212,25 @@ lock_acquire (struct lock *lock)
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
-
+  struct thread *cur = thread_current();
+  // ---------------implementation of priority donation----------------
+  // if (lock->holder != NULL)
+  // {
+  //   cur->waiting_lock = lock;
+  //   update_priority_by_lock(cur->priority, lock);
+  // }
+  // ---------------implementation of priority donation----------------
   sema_down (&lock->semaphore);
-  lock->holder = thread_current ();
+  cur->waiting_lock = NULL;
+  lock->holder = cur;
+  // ---------------implementation of priority donation----------------
+  // for (int i = 0; i < MAX_LOCKS; i++) {
+  //   if (cur->owner_locks[i] == NULL) {
+  //     cur->owner_locks[i] = lock;
+  //     break;
+  //   }
+  //  }
+  // ---------------implementation of priority donation----------------
 }
 
 /** Tries to acquires LOCK and returns true if successful or false
@@ -215,8 +248,19 @@ lock_try_acquire (struct lock *lock)
   ASSERT (!lock_held_by_current_thread (lock));
 
   success = sema_try_down (&lock->semaphore);
-  if (success)
-    lock->holder = thread_current ();
+  if (success) {
+    // lock->holder = thread_current ();
+    struct thread *t = thread_current();
+    lock->holder = t;
+  // ---------------implementation of priority donation----------------
+  //   for (int i = 0; i < MAX_LOCKS; i++) {
+  //   if (t->owner_locks[i] == NULL) {
+  //     t->owner_locks[i] = lock;
+  //     break;
+  //   }
+  //  }
+  // ---------------implementation of priority donation----------------
+  }
   return success;
 }
 
@@ -230,8 +274,32 @@ lock_release (struct lock *lock)
 {
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
-
   lock->holder = NULL;
+
+  // ---------------implementation of priority donation----------------
+  // struct thread *t = thread_current();
+  // for (int i = 0; i < MAX_LOCKS; i++) {
+  //   if (t->owner_locks[i] == lock) {
+  //     t->owner_locks[i] = NULL;
+  //     break;
+  //   }
+  // }
+  // int priority = t->raw_priority;
+  // for (int i = 0; i < MAX_LOCKS; i++) {
+  // struct lock *l = t->owner_locks[i];
+  // if (l == NULL) {
+  //   continue;
+  // }
+  // if (!list_empty(&l->semaphore.waiters)){
+  // struct list_elem *max_priority_item = list_max(&l->semaphore.waiters, thread_priority_elem_cmp, NULL);
+  // struct thread *tmp  = list_entry (max_priority_item, struct thread, elem);
+  // if (tmp->priority > priority) {
+  //   priority = tmp->priority;
+  // }
+  // }
+  // }
+  // t->priority = priority;
+  // ---------------implementation of priority donation----------------
   sema_up (&lock->semaphore);
 }
 
@@ -308,6 +376,27 @@ cond_wait (struct condition *cond, struct lock *lock)
    An interrupt handler cannot acquire a lock, so it does not
    make sense to try to signal a condition variable within an
    interrupt handler. */
+
+//----------------------------START the implementation of zhuhongzhi-------------
+bool sea_elem_cmp(struct list_elem *a, struct list_elem *b, void *aux) {
+  struct semaphore *sema_a = &list_entry(a, struct semaphore_elem, elem)->semaphore;
+  struct semaphore *sema_b = &list_entry(b, struct semaphore_elem, elem)->semaphore;
+  int priority_a = list_entry(list_begin(&sema_a->waiters), struct thread, elem)->priority;
+  int priority_b = list_entry(list_begin(&sema_b->waiters), struct thread, elem)->priority;
+  if (priority_a < priority_b)
+  {
+    return true;
+  }
+  return false;
+  //  struct semaphore_elem *elem_a = list_entry(a, struct semaphore_elem, elem);
+  //  struct semaphore_elem *elem_b = list_entry(a, struct semaphore_elem, elem);
+  // struct semaphore *sema_a = &list_entry(a, struct semaphore_elem, elem)->semaphore;
+  // return true;
+}
+//----------------------------End the implementation of zhuhongzhi----------------
+
+
+
 void
 cond_signal (struct condition *cond, struct lock *lock UNUSED) 
 {
@@ -317,8 +406,16 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED)
   ASSERT (lock_held_by_current_thread (lock));
 
   if (!list_empty (&cond->waiters)) 
-    sema_up (&list_entry (list_pop_front (&cond->waiters),
-                          struct semaphore_elem, elem)->semaphore);
+  {
+      // sema_up (&list_entry (list_pop_front (&cond->waiters),
+      //     struct semaphore_elem, elem)->semaphore);
+      struct list_elem *max_priority_item = list_max(&cond->waiters, sea_elem_cmp, NULL);
+      list_remove(max_priority_item);
+      sema_up (&list_entry (max_priority_item,
+        struct semaphore_elem, elem)->semaphore);
+
+  }
+   
 }
 
 /** Wakes up all threads, if any, waiting on COND (protected by

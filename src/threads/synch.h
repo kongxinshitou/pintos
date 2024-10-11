@@ -4,6 +4,8 @@
 #include <list.h>
 #include <stdbool.h>
 
+#define MAX_DONETORS 10
+
 /** A counting semaphore. */
 struct semaphore 
   {
@@ -21,7 +23,7 @@ void sema_self_test (void);
 struct lock 
   {
     struct thread *holder;      /**< Thread holding lock (for debugging). */
-    struct semaphore semaphore; /**< Binary semaphore controlling access. */
+    struct semaphore semaphore; /**< Binary semaphore controlling access. */ 
   };
 
 void lock_init (struct lock *);
@@ -40,6 +42,10 @@ void cond_init (struct condition *);
 void cond_wait (struct condition *, struct lock *);
 void cond_signal (struct condition *, struct lock *);
 void cond_broadcast (struct condition *, struct lock *);
+
+//----------------------------START the implementation of zhuhongzhi-------------
+bool sea_elem_cmp(struct list_elem *a, struct list_elem *b, void *aux);
+//----------------------------End the implementation of zhuhongzhi----------------
 
 /** Optimization barrier.
 
