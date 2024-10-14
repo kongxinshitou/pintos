@@ -21,10 +21,15 @@
  * push { SEMAPHORE  TIME_TO_WAKE_UP} to the list . In every thread_tick, time_block_list should be checked, if it is null, 
  * no thing would be done. Otherwise, the kernel will check the time_block_list one by one. 
  * if the time_ticks_to_wake of the current element is less than the current_time_ticks, pop the SEMAPHORE out and V the  SEMAPHORE。 
- *  ----------TODO-------
+ *  ----------TODO-------DONE----------------
  * Keep the list sorted by TIME_TO_WAKE_UP is more efficient. As in every thread_tick, the list will not longer be checked one by one.
  * If the TIME_TO_WAKE_UP of the first element is larger than the current_time_ticks, the kernel can break the loop.
 */
+static struct list priority_queues[64];
+
+int64_t load_avg;
+
+
 static struct list time_block_list;
 
 struct time_block_elem
@@ -61,6 +66,54 @@ bool thread_priority_elem_cmp(struct list_elem *a, struct list_elem *b, void *au
   return false;
 }
 
+
+void update_thread_priority(struct thread *t) {
+  int old_priority = t->priority;
+  t->priority = PRI_MAX - (t->recent_cpu / 4) - t->nice * 2;
+  if (t->priority > PRI_MAX) {
+    t->priority = PRI_MAX;
+  } else if (t->priority < PRI_MIN) {
+    t->priority = PRI_MIN;
+  }
+}
+void update_thread_recent_cpu(struct thread *t) {
+  int64_t old_recent_cpu = t->recent_cpu;
+  t->recent_cpu = 2 * load_avg * FRACTION / (2 * load_avg + 1) * old_recent_cpu / FRACTION + t->nice;
+}
+void calculate_load_avg(void){
+  int ready_threads = get_thread_to_run_num();
+  
+  load_avg = load_avg * 59 / 60 + (int64_t)ready_threads * FRACTION * 1 / 60;
+}
+int get_thread_ready_max_priority(void){
+  for (int i = PRI_MAX; i >= PRI_MIN; i--) {
+    if (!list_empty(&priority_queues[i])) {
+      return i;
+    }
+  }
+  return 0;
+}
+int get_thread_to_run_num(void){
+  int num = 0;
+  for (int i = PRI_MAX; i >= PRI_MIN; i--) {
+    num += list_size(&priority_queues[i]);
+  }
+  struct thread *t = thread_current();
+  if (strcmp(t->name, "idle") != 0) {
+    num++;
+  }
+
+  return num;
+}
+
+void push_ready_thread(struct thread *t) {
+  if (thread_mlfqs)
+  {
+    list_push_back(&priority_queues[t->priority], &t->elem);
+  } else {
+    list_push_back (&ready_list, &t->elem);
+  }
+}
 //----------------------------End the implementation of zhuhongzhi---------
 
 /** Random value for struct thread's `magic' member.
@@ -138,7 +191,14 @@ thread_init (void)
   ASSERT (intr_get_level () == INTR_OFF);
 
   lock_init (&tid_lock);
-  list_init (&ready_list);
+  if (thread_mlfqs) {
+    for (int i = 0; i < 64; i++) {
+      list_init(&priority_queues[i]);
+    }
+  } else {
+    list_init (&ready_list);
+  }
+  // list_init (&ready_list);
   list_init (&all_list);
 
   //----------------------------START the implementation of zhuhongzhi-------------
@@ -168,86 +228,6 @@ thread_start (void)
   /* Wait for the idle thread to initialize idle_thread. */
   sema_down (&idle_started);
 }
-
-// void flush_priority_by_locks(void)
-// {
-//   struct thread *t = thread_current();
-//   int priority = t->raw_priority;
-//   for (int i = 0; i < MAX_LOCKS; i++) {
-//     struct lock *l = t->owner_locks[i];
-//     if (l == NULL) {
-//       continue;
-//     }
-//     if (!list_empty(&l->semaphore.waiters)){
-//     struct list_elem *max_priority_item = list_max(&l->semaphore.waiters, thread_priority_elem_cmp, NULL);
-//     struct thread *tmp  = list_entry (max_priority_item, struct thread, elem);
-//     if (tmp->priority > priority) {
-//       priority = tmp->priority;
-//     }
-//     }
-//   }
-//   t->priority = priority;
-//   if ( intr_context()) {
-//     intr_yield_on_return();
-//   } else {
-//     thread_yield();
-//   }
-// }
-
-// void register_holding_locks(struct lock *l)
-// {
-//   struct thread *t = thread_current();
-//    for (int i = 0; i < MAX_LOCKS; i++) {
-//       if (t->owner_locks[i] == l) {
-//         return;
-//       }
-//    }
-//     for (int i = 0; i < MAX_LOCKS; i++) {
-//     if (t->owner_locks[i] == NULL) {
-//       t->owner_locks[i] = l;
-//       return;
-//     }
-//    }
-// }
-
-// void deregister_holding_locks(struct lock *l)
-// {
-//   struct thread *t = thread_current();
-//   for (int i = 0; i < MAX_LOCKS; i++) {
-//     if (t->owner_locks[i] == l) {
-//       t->owner_locks[i] = NULL;
-//       return;
-//     }
-//   }
-// }
-
-// void register_waiting_locks(struct lock *l)
-// {
-//   struct thread *t = thread_current();
-//   t->waiting_lock = l;
-// }
-
-// void deregister_waiting_locks(struct lock *l)
-// {
-//   struct thread *t = thread_current();
-//   t->waiting_lock = NULL;
-// }
-
-void update_priority_by_lock(int priority, struct lock *l)
-{
-  struct thread *t = l->holder;
-  if (t == NULL) {
-    return;
-  }
-  if (priority > l->holder->priority) {
-    l->holder->priority = priority;
-    if (t->waiting_lock != NULL) {
-      update_priority_by_lock(priority, t->waiting_lock);
-    }
-  }
-}
-
-
 
 /** Called by the timer interrupt handler at each timer tick.
    Thus, this function runs in an external interrupt context. */
@@ -283,9 +263,21 @@ thread_tick (void)
       break;
     }
   }
+  t->recent_cpu += 1;
+  if ((idle_ticks + user_ticks + kernel_ticks) % TIMER_FREQ == 0)
+  {
+    calculate_load_avg();
+    struct list_elem *e;
+    for (e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e))
+    {
+      struct thread *t = list_entry(e, struct thread, allelem);
+      update_thread_recent_cpu(t);
+    }
+  }
   //--------------------End the implementation of zhuhongzhi-------------------s
 
   if (++thread_ticks >= TIME_SLICE)
+    update_thread_priority(t);
     intr_yield_on_return ();
 }
 
@@ -351,13 +343,20 @@ thread_create (const char *name, int priority,
   /* Add to run queue. */
   thread_unblock (t);
   //------------------start of implementation of zhz-----------------------
-  if (t->priority > thread_current()->priority)
+  bool to_yield = false;
+  if (thread_mlfqs)
   {
-        if ( intr_context()) {
-          intr_yield_on_return();
-        } else {
-          thread_yield();
-        }
+    to_yield = get_thread_ready_max_priority() < t->priority;
+  } else {
+    to_yield = t->priority > thread_current()->priority;
+  }
+  if (to_yield)
+  {
+    if ( intr_context()) {
+      intr_yield_on_return();
+    } else {
+      thread_yield();
+    }
   }
   //------------------end of implementation of zhz-------------------------
   return tid;
@@ -396,8 +395,7 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
-  // list_insert_ordered(&ready_list, &t->elem, thread_priority_elem_cmp, NULL);
+  push_ready_thread(t);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -467,9 +465,10 @@ thread_yield (void)
   ASSERT (!intr_context ());
 
   old_level = intr_disable ();
-  if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
-    // list_insert_ordered(&ready_list, &cur->elem, thread_priority_elem_cmp, NULL);
+  if (cur != idle_thread) {
+    push_ready_thread(cur);
+  }
+    
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -496,27 +495,10 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-    struct thread *t = thread_current();
-    t->priority = new_priority;
-  // ---------------implementation of priority donation----------------
-  // struct thread *t = thread_current();
-  // int priority = new_priority;
-  // t->raw_priority = new_priority;
-  // for (int i = 0; i < MAX_LOCKS; i++) {
-  // struct lock *l = t->owner_locks[i];
-  // if (l == NULL) {
-  //   continue;
-  // }
-  // if (!list_empty(&l->semaphore.waiters)){
-  // struct list_elem *max_priority_item = list_max(&l->semaphore.waiters, thread_priority_elem_cmp, NULL);
-  // struct thread *tmp  = list_entry (max_priority_item, struct thread, elem);
-  // if (tmp->priority > priority) {
-  //   priority = tmp->priority;
-  // }
-  // }
-  // }
-  // t->priority = priority;
-  // ---------------implementation of priority donation----------------
+  if (thread_mlfqs)
+    return;
+  struct thread *t = thread_current();
+  t->priority = new_priority;
   if (!list_empty(&ready_list))
   {
         if ( intr_context()) {
@@ -539,14 +521,28 @@ void
 thread_set_nice (int nice UNUSED) 
 {
   /* Not yet implemented. */
+  if (!thread_mlfqs)
+    return;
+  struct thread *t = thread_current();
+  t->nice = nice;
+  update_thread_priority(t);
+  if (get_thread_ready_max_priority() > t->priority){
+     if ( intr_context()) {
+          intr_yield_on_return();
+        } else {
+          thread_yield();
+        }
+  }
 }
 
 /** Returns the current thread's nice value. */
 int
 thread_get_nice (void) 
 {
+  if (!thread_mlfqs)
+    return 0;
   /* Not yet implemented. */
-  return 0;
+  return thread_current()->nice;
 }
 
 /** Returns 100 times the system load average. */
@@ -554,7 +550,8 @@ int
 thread_get_load_avg (void) 
 {
   /* Not yet implemented. */
-  return 0;
+  int current_load_avg = load_avg * 100 / FRACTION;
+  return current_load_avg;
 }
 
 /** Returns 100 times the current thread's recent_cpu value. */
@@ -562,7 +559,9 @@ int
 thread_get_recent_cpu (void) 
 {
   /* Not yet implemented. */
-  return 0;
+  struct thread *t = thread_current();
+  int current_recent_cpu = t->recent_cpu * 100;
+  return current_recent_cpu;
 }
 
 /** Idle thread.  Executes when no other thread is ready to run.
@@ -650,10 +649,17 @@ init_thread (struct thread *t, const char *name, int priority)
   t->status = THREAD_BLOCKED;
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
-  t->priority = priority;
-//-----------------------start of implementation of zhz--------
-  t->raw_priority = priority;
-//-----------------------end of implementation of zhz---------
+  if (!thread_mlfqs) {
+  } else if (strcmp(name, "main") != 0 && strcmp(name, "idle") != 0) {
+    t->nice = thread_current()->nice;
+  } else {
+    t->nice = 0;
+  }
+  if (!thread_mlfqs) {
+    t->priority = priority;
+  } else {
+    update_thread_priority(t);
+  }
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();
@@ -682,13 +688,23 @@ alloc_frame (struct thread *t, size_t size)
 static struct thread *
 next_thread_to_run (void) 
 {
-  if (list_empty (&ready_list))
-    return idle_thread;
-  else{
-    struct list_elem *max_priority_item = list_max(&ready_list, thread_priority_elem_cmp, NULL);
-    list_remove(max_priority_item);
-    return list_entry (max_priority_item, struct thread, elem);
+  // 1. if the thread_mlfqs is true, the thread should be selected from the priority_queues
+  if (thread_mlfqs) {
+    int max_priority = get_thread_ready_max_priority();
+    // 1.1 if the priority_queues is empty, the idle_thread should be returned
+    if (list_empty(&priority_queues[max_priority])) {
+      return idle_thread;
+    }
+    // 1.2 the thread with the highest priority should be selected
+    return list_entry(list_pop_front(&priority_queues[max_priority]), struct thread, elem);
+  } else {
+    // 2. if the thread_mlfqs is false, the thread should be selected from the ready_list
+    if (list_empty(&ready_list)) {
+      return idle_thread;
+    }
+    return list_entry(list_pop_front(&ready_list), struct thread, elem);
   }
+
 }
 
 /** Completes a thread switch by activating the new thread's page

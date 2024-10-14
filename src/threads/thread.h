@@ -24,8 +24,9 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /**< Default priority. */
 #define PRI_MAX 63                      /**< Highest priority. */
 
-/** The number of locks relation */
-#define MAX_LOCKS 5
+
+/** The value of fraction */
+#define FRACTION 16384
 
 /** A kernel thread or user process.
 
@@ -97,9 +98,8 @@ struct thread
     struct list_elem elem;              /**< List element. */
 
    //----------------------------START of the implementation of zhuhongzhi-------------
-    struct lock *owner_locks[MAX_LOCKS];
-    struct lock *waiting_lock;
-    int raw_priority;
+    int64_t recent_cpu;
+    int8_t nice;
    //----------------------------END of the implementation of zhuhongzhi-------------
 
 #ifdef USERPROG
@@ -153,6 +153,11 @@ void thread_sleep_until(int64_t ticks);
 
 bool time_block_elem_cmp(struct list_elem *a, struct list_elem *b, void *aux);
 bool thread_priority_elem_cmp(struct list_elem *a, struct list_elem *b, void *aux);
-void update_priority_by_lock(int priority, struct lock *l);
+void update_thread_priority(struct thread *t);
+void update_thread_recent_cpu(struct thread *t);
+void calculate_load_avg(void);
+int get_thread_ready_max_priority(void);
+int get_thread_to_run_num(void);
+void push_ready_thread(struct thread *t);
 //----------------------------End the implementation of zhuhongzhi----------------
 #endif /**< threads/thread.h */
